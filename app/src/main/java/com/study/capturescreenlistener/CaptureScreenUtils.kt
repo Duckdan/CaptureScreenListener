@@ -23,9 +23,9 @@ import com.study.capturescreenlistener.contentobserver.UriObserver
 object CaptureScreenUtils : UriObserver.UriChangeListener {
 
     private var contentResolver: ContentResolver? = null
-//    private var videoObserver: UriObserver
+    private var videoObserver: UriObserver
     private var imageObserver: UriObserver
-    private var mainHandler:Handler
+    private var mainHandler: Handler
 
 
     private var context: Context? = null
@@ -41,7 +41,8 @@ object CaptureScreenUtils : UriObserver.UriChangeListener {
         "screencap",
         "screen_cap",
         "screen-cap",
-        "screen cap"
+        "screen cap",
+        "screenrecorder"
     )
     private val screenPicture = mutableSetOf<String>()
 
@@ -51,8 +52,8 @@ object CaptureScreenUtils : UriObserver.UriChangeListener {
         val handler = Handler(handlerThread.looper)
         mainHandler = Handler(Looper.getMainLooper())
 
-//        videoObserver = UriObserver(handler)
-//        videoObserver.setOnUriChangeListener(this)
+        videoObserver = UriObserver(handler)
+        videoObserver.setOnUriChangeListener(this)
 
         imageObserver = UriObserver(handler)
         imageObserver.setOnUriChangeListener(this)
@@ -82,16 +83,31 @@ object CaptureScreenUtils : UriObserver.UriChangeListener {
                 when {
                     uriPath.contains("video") -> { //录屏
                         type = "video"
-                        val dataIndex = cursor.getColumnIndex(MediaStore.Video.VideoColumns.DATA)
-                        path = cursor.getString(dataIndex).toLowerCase()
+                        path =
+                            cursor.getColumnIndex(MediaStore.Video.VideoColumns.DATA).takeIf {
+                                it > -1
+                            }?.run {
+                                cursor.getString(this).toLowerCase()
+                            } ?: ""
 
-                        val relativePathIndex =
+
+                        //小米手机没这个字段
+                        relativePath =
                             cursor.getColumnIndex(MediaStore.Images.ImageColumns.RELATIVE_PATH)
-                        relativePath = cursor.getString(relativePathIndex)
+                                .takeIf {
+                                    it > -1
+                                }?.run {
+                                    cursor.getString(this)
+                                } ?: ""
 
-                        val dateAddIndex =
+
+                        dateAdd =
                             cursor.getColumnIndex(MediaStore.Images.ImageColumns.DATE_ADDED)
-                        dateAdd = cursor.getString(dateAddIndex)
+                                .takeIf {
+                                    it > -1
+                                }?.run {
+                                    cursor.getString(this)
+                                } ?: ""
                     }
                     uriPath.contains("images") -> {//截屏
                         type = "images"
@@ -117,9 +133,15 @@ object CaptureScreenUtils : UriObserver.UriChangeListener {
                 Log.e(javaClass.simpleName, "type=====$type,  dateAdd=====$dateAdd,  uri=====$uri")
 
                 for (keyword in KEYWORDS) {
+                    /**
+                     * android手机很可能出现录制一个视频或者截屏一次，通知观察者多次的情况。
+                     * 如果没有必要区分录屏还是截屏，那么在这个地方添加一个节流操作就行了，大概3s左右就行
+                     */
                     if (path.contains(keyword)) {
                         //还在子线程中，在这里处理发现被录屏或者截屏的逻辑
-                        mainHandler.post { Toast.makeText(context,"当前被截屏了",Toast.LENGTH_SHORT).show() }
+                        mainHandler.post {
+                            Toast.makeText(context, "当前被截屏了", Toast.LENGTH_SHORT).show()
+                        }
                         break
                     }
                 }
@@ -132,11 +154,15 @@ object CaptureScreenUtils : UriObserver.UriChangeListener {
         val contentResolver = context.contentResolver
         contentResolver?.let { contentResolver ->
             this.contentResolver = contentResolver
-//            contentResolver.registerContentObserver(
-//                MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
-//                false,
-//                videoObserver
-//            )
+            /**
+             * 小米手机录屏保存视频时不会触发MediaStore.Images.Media.EXTERNAL_CONTENT_URI，所以要添加 MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+             * 荣耀10手机录屏保存视频时会触发MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+             */
+            contentResolver.registerContentObserver(
+                MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
+                false,
+                videoObserver
+            )
             contentResolver.registerContentObserver(
                 MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
                 false,
@@ -148,7 +174,7 @@ object CaptureScreenUtils : UriObserver.UriChangeListener {
 
     fun unregister() {
         contentResolver?.let {
-//            it.unregisterContentObserver(videoObserver)
+            it.unregisterContentObserver(videoObserver)
             it.unregisterContentObserver(imageObserver)
         }
         contentResolver = null
