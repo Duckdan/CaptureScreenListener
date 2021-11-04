@@ -31,6 +31,7 @@ object CaptureScreenUtils : UriObserver.UriChangeListener {
     private var context: Context? = null
     private val KEYWORDS = arrayOf(
         "screenshot",
+        "screenshots",
         "screen_shot",
         "screen-shot",
         "screen shot",
@@ -45,7 +46,7 @@ object CaptureScreenUtils : UriObserver.UriChangeListener {
         "screenrecorder"
     )
     private val screenPicture = mutableSetOf<String>()
-
+    private var screenTime = 0L
     init {
         val handlerThread = HandlerThread("uriobserver")
         handlerThread.start()
@@ -62,18 +63,18 @@ object CaptureScreenUtils : UriObserver.UriChangeListener {
 
     override fun change(selfChange: Boolean, uri: Uri) {
         contentResolver?.let { it ->
-
+            val uriPath = uri.path?.toLowerCase() ?: ""
             it.query(
                 uri,
                 null,
                 null,
                 null,
-                MediaStore.Images.ImageColumns.DATE_ADDED + " desc limit 1"
+                "${if(uriPath.contains("video")) MediaStore.Video.VideoColumns.DATE_ADDED else MediaStore.Images.ImageColumns.DATE_ADDED } desc limit 1"
             )?.takeIf { cursor ->
                 cursor.moveToFirst()
             }?.use { cursor ->
                 var path = ""
-                var dateAdd = ""
+                var dateAdd = 0L
                 var relativePath = ""
                 var type = ""
                 val uriPath = uri.path?.toLowerCase() ?: ""
@@ -106,8 +107,8 @@ object CaptureScreenUtils : UriObserver.UriChangeListener {
                                 .takeIf {
                                     it > -1
                                 }?.run {
-                                    cursor.getString(this)
-                                } ?: ""
+                                    cursor.getLong(this)
+                                } ?: 0L
                     }
                     uriPath.contains("images") -> {//截屏
                         type = "images"
@@ -120,7 +121,7 @@ object CaptureScreenUtils : UriObserver.UriChangeListener {
 
                         val dateAddIndex =
                             cursor.getColumnIndex(MediaStore.Images.ImageColumns.DATE_ADDED)
-                        dateAdd = cursor.getString(dateAddIndex)
+                        dateAdd = cursor.getLong(dateAddIndex)
                     }
                     else -> type = "未知"
                 }
@@ -130,14 +131,14 @@ object CaptureScreenUtils : UriObserver.UriChangeListener {
                     javaClass.simpleName,
                     "type=====$type,  relativePath=====$relativePath,  uri=====$uri"
                 )
-                Log.e(javaClass.simpleName, "type=====$type,  dateAdd=====$dateAdd,  uri=====$uri")
+                Log.e(javaClass.simpleName, "type=====$type,  dateAdd=====$dateAdd,  uri=====$uri,  当前时间：${System.currentTimeMillis()}")
 
                 for (keyword in KEYWORDS) {
                     /**
-                     * android手机很可能出现录制一个视频或者截屏一次，通知观察者多次的情况。
-                     * 如果没有必要区分录屏还是截屏，那么在这个地方添加一个节流操作就行了，大概3s左右就行
+                     * 利用添加的时间来去除重复提醒的问题，因为多个机型出现录屏的时候也会通知截屏的uri;截屏的时候也会通知录屏的uri
                      */
-                    if (path.contains(keyword)) {
+                    if (path.contains(keyword)&& dateAdd> screenTime) {
+                        screenTime = dateAdd
                         //还在子线程中，在这里处理发现被录屏或者截屏的逻辑
                         mainHandler.post {
                             Toast.makeText(context, "当前被截屏了", Toast.LENGTH_SHORT).show()
@@ -157,15 +158,17 @@ object CaptureScreenUtils : UriObserver.UriChangeListener {
             /**
              * 小米手机录屏保存视频时不会触发MediaStore.Images.Media.EXTERNAL_CONTENT_URI，所以要添加 MediaStore.Video.Media.EXTERNAL_CONTENT_URI
              * 荣耀10手机录屏保存视频时会触发MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+             *
+             *   //notifyForDescendants必须用true,因为有的机型只通知子uri
              */
             contentResolver.registerContentObserver(
                 MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
-                false,
+                true,
                 videoObserver
             )
             contentResolver.registerContentObserver(
                 MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
-                false,
+                true,
                 imageObserver
             )
 
